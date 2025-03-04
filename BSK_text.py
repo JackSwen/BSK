@@ -1,12 +1,33 @@
 import pandas as pd
 import numpy as np
+import concurrent.futures
+import matplotlib.pyplot as plt
+import json
+import os
+
+
+def measure_time(func):
+    def wrapper(*args, **kwargs):
+        start_time = time.time()  
+        result = func(*args, **kwargs)
+        end_time = time.time()  
+        elapsed_time = end_time - start_time  
+        #transfer_h_min_sec 
+        hours = int(elapsed_time // 3600)
+        minutes = int((elapsed_time % 3600) // 60)
+        seconds = int(elapsed_time % 60)
+
+        print(f"Running time: {hours}h {minutes}min {seconds}s")
+        return result
+
+    return wrapper
 
 
 def initialize_centroids(data, k):
     """
-    随机初始化k个聚类中心
+    Random initialization
     """
-    np.random.seed(0)
+    # np.random.seed(0)
     centroids = []
     centroids.append(np.random.choice(len(data)))
     for _ in range(1, k):
@@ -19,9 +40,10 @@ def initialize_centroids(data, k):
         centroids.append(new_centroid_index)
     return np.array(centroids)
 
+
 def assign_to_clusters(data, centroids):
     """
-    将每个点分配到最近的聚类中心所代表的组
+    Assignment to clusters
     """
     clusters = [[] for _ in range(len(centroids))]
     for i in range(len(data)):
@@ -32,7 +54,7 @@ def assign_to_clusters(data, centroids):
 
 def update_centroids(data, clusters):
     """
-    更新每个组的聚类中心
+    Centroids updating
     """
     new_centroids = []
     for cluster in clusters:
@@ -46,22 +68,23 @@ def update_centroids(data, clusters):
         new_centroids.append(new_centroid)
     return np.array(new_centroids)
 
-def k_means(data, k, max_iterations=100):
+def k_means(data, k, max_iterations=500):
     """
-    K均值聚类算法
+    BSK-means clustering 
     """
     centroids = initialize_centroids(data, k)
-    for _ in range(max_iterations):
+    for i in range(max_iterations):
         clusters = assign_to_clusters(data, centroids)
         new_centroids = update_centroids(data, clusters)
         if np.array_equal(new_centroids, centroids):
+            # print(f'centroids remain the same, iterations: {i}, k: {k}')
             break
         centroids = new_centroids
     return centroids, clusters
 
 def average_distance_within_cluster(sample_idx, cluster, data):
     """
-    计算样本到同一聚类中其他样本的平均距离
+    Distance within clusters
     """
     sum_distance = 0
     for idx in cluster:
@@ -71,7 +94,7 @@ def average_distance_within_cluster(sample_idx, cluster, data):
 
 def average_distance_to_nearest_cluster(sample_idx, cluster, clusters, data):
     """
-    计算样本到最近的其他聚类中样本的平均距离
+    Distance with nearest cluster
     """
     min_distance = float('inf')
     for other_cluster in clusters:
@@ -83,7 +106,7 @@ def average_distance_to_nearest_cluster(sample_idx, cluster, clusters, data):
 
 def silhouette_coefficient(sample_idx, cluster, clusters, data):
     """
-    计算轮廓系数
+    Silhouette_calculation
     """
     a = average_distance_within_cluster(sample_idx, cluster, data)
     b = average_distance_to_nearest_cluster(sample_idx, cluster, clusters, data)
@@ -91,7 +114,7 @@ def silhouette_coefficient(sample_idx, cluster, clusters, data):
 
 def silhouette_score(data, clusters):
     """
-    计算整体的轮廓系数 (衡量聚类的紧密度和分离度,越接近1,表示聚类效果越好)
+    Overall silhouette_score (Best:1.00)
     """
     silhouette_scores = []
     cluster_labels = np.zeros(len(data), dtype=int)
@@ -102,7 +125,7 @@ def silhouette_score(data, clusters):
 
 def find_best_k(data, max_k):
     """
-    寻找最佳的k值(聚类数)
+    K value: the number for the best clustering
     """
     silhouette_scores = []
     best_k = 0
@@ -117,15 +140,80 @@ def find_best_k(data, max_k):
     return best_k, silhouette_scores
 
 
-if __name__ == "__main__":
-    # 读取Excel文件
-    data = np.array(pd.read_excel('聚类预测20240305.xlsx', header=None))
+def plot_clusters(data, clusters, centroids):
+    """
+    clusters results for each clustering
+    """
+    plt.figure(figsize=(8, 6))
 
-    max_k = 30  # 设置最大的k值
-    best_k,silhouette_scores = find_best_k(data, max_k)
-    centroids, clusters = k_means(data, best_k)
-    print(f'组数：{best_k}\n')
     for i, cluster in enumerate(clusters):
-        mean_dis = np.sum(data[centroids[i],cluster])/len(cluster)  # 平均距离
-        Var_dis = np.sum((data[centroids[i],clu]-mean_dis)**2 for clu in cluster)/len(cluster)  # 方差
-        print(f"组{i+1}  ---  点数:{len(cluster)}  中心点:{centroids[i]+1}  点集:{[point+1 for point in cluster]}  中心点至组内其余点平均距离:{mean_dis}  方差:{Var_dis}\n")
+        cluster_points = data[cluster]
+        plt.scatter(cluster_points[:, 0], cluster_points[:, 1], label=f'Cluster {i+1}')
+
+    # centroids ploting
+    plt.scatter(centroids[:, 0], centroids[:, 1], c='black', marker='x', s=100, label='Centroids')
+
+    plt.title('K-means Clustering Results')
+    plt.xlabel('Feature 1')
+    plt.ylabel('Feature 2')
+    plt.legend()
+    plt.show()
+
+
+def read_json(json_path):
+    with open(json_path, 'r') as f:
+        json_file = json.load(f)
+        return json_file
+
+
+def write_json(json_path, save_file, indent=4):
+    with open(json_path, 'w') as f:
+        json.dump(save_file, f, indent=indent)
+
+
+def process_seed(seed, data, max_k):
+    np.random.seed(seed)
+    best_k, silhouette_scores = find_best_k(data, max_k)
+    centroids, clusters = k_means(data, best_k)
+
+    result = {
+        'seed': seed,
+        'best_k': best_k,
+        'clusters': {}
+    }
+
+    print(f'num_clusters：{best_k}')
+    for i, cluster in enumerate(clusters):
+        mean_dis = np.sum(data[centroids[i], cluster]) / len(cluster)  # average_distance
+        Var_dis = np.sum((data[centroids[i], clu] - mean_dis) ** 2 for clu in cluster) / len(cluster)  # var
+        print(
+            f"Cluster_ID{i + 1}  ---  Num_points:{len(cluster)}  Centroids:{centroids[i] + 1}  Points:{[point + 1 for point in cluster]}  Average_distance:{mean_dis}  Var_dis:{Var_dis}")
+        result['clusters'][f'group_{i + 1}'] = {
+            'num': len(cluster),
+            'centroid': int(centroids[i] + 1),
+            'mean_dis': float(round(mean_dis, 6)),
+            'var_dis': float(round(Var_dis, 6)),
+            'point_set': [point + 1 for point in cluster],
+        }
+    write_json(f'./result/seed_{seed}-max_k_30.json', result)
+
+
+@measure_time
+def main():
+    # reading txt files
+    data = np.loadtxt('G3BP1_rmsd_matrix.txt')
+    if not os.path.exists('result'):
+        os.makedirs('result')
+    max_k = 10  # max number of clusters
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(process_seed, seed, data, max_k) for seed in range(0, 500)]
+        #wait for all done
+        concurrent.futures.wait(futures)
+
+
+
+if __name__ == "__main__":
+    import time
+
+    main()
